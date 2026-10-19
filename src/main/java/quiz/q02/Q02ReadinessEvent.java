@@ -1,6 +1,6 @@
-// 1. Which event means "the application is really ready"?
-// Run: ./gradlew q01
-package quiz.q01;
+// 2. Which event means "the application is really ready"?
+// Run: ./gradlew q02
+package quiz.q02;
 
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.Banner;
@@ -15,8 +15,8 @@ import org.springframework.context.event.EventListener;
 
 import quiz.common.Cats;
 
-@SpringBootApplication(scanBasePackages = "quiz.q01")
-public class Q01ReadinessEvent {
+@SpringBootApplication(scanBasePackages = "quiz.q02")
+public class Q02ReadinessEvent {
 
     @Bean
     ApplicationRunner warmUpCache() {
@@ -43,7 +43,7 @@ public class Q01ReadinessEvent {
 
     public static void main(String[] args) {
         Cats.cat("Dobby waits for the application to be ready");
-        new SpringApplicationBuilder(Q01ReadinessEvent.class)
+        new SpringApplicationBuilder(Q02ReadinessEvent.class)
                 .web(WebApplicationType.NONE)
                 .bannerMode(Banner.Mode.OFF)
                 .logStartupInfo(false)

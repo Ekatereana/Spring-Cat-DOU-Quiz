@@ -1,4 +1,4 @@
-package quiz.q09;
+package quiz.q01;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

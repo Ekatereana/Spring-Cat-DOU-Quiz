@@ -1,6 +1,6 @@
-// 8. Two beans needing each other
-// Run: ./gradlew q08
-package quiz.q08;
+// 4. Two beans needing each other
+// Run: ./gradlew q04
+package quiz.q04;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.Banner;
@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service;
 
 import quiz.common.Cats;
 
-public class Q08CircularDeps {
+public class Q04CircularDeps {
 
     // ---- version A: constructor injection both ways -------------------------
     @Configuration

@@ -1,6 +1,6 @@
-// 10. timeout = 20s, yet the connection was open all night
-// Run: ./gradlew q10
-package quiz.q10;
+// 5. timeout = 20s, yet the connection was open all night
+// Run: ./gradlew q05
+package quiz.q05;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -15,15 +15,15 @@ import org.springframework.context.ConfigurableApplicationContext;
 
 import quiz.common.Cats;
 
-@SpringBootApplication(scanBasePackages = "quiz.q10")
-public class Q10TxBoundaries {
+@SpringBootApplication(scanBasePackages = "quiz.q05")
+public class Q05TxBoundaries {
 
     private static HikariPoolMXBean pool;
 
     public static void main(String[] args) {
         Cats.cat("Dobby's nightly job: @Transactional(timeout = 2) and a connection that never lets go");
 
-        try (ConfigurableApplicationContext ctx = new SpringApplicationBuilder(Q10TxBoundaries.class)
+        try (ConfigurableApplicationContext ctx = new SpringApplicationBuilder(Q05TxBoundaries.class)
                 .web(WebApplicationType.NONE).bannerMode(Banner.Mode.OFF).logStartupInfo(false)
                 .properties("spring.datasource.hikari.maximum-pool-size=3").run(args)) {
 

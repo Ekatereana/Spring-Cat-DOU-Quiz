@@ -1,4 +1,4 @@
-package quiz.q04;
+package quiz.q01;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 

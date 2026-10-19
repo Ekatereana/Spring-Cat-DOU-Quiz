@@ -1,6 +1,6 @@
-// 9. Friday, 17:00: HikariPool-1 - Connection is not available
-// Run: ./gradlew q09
-package quiz.q09;
+// 1. Friday, 17:00: HikariPool-1 - Connection is not available
+// Run: ./gradlew q01
+package quiz.q01;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,8 +21,8 @@ import org.springframework.context.ConfigurableApplicationContext;
 
 import quiz.common.Cats;
 
-@SpringBootApplication(scanBasePackages = "quiz.q09")
-public class Q09PoolExhausted {
+@SpringBootApplication(scanBasePackages = "quiz.q01")
+public class Q01PoolExhausted {
 
     private static final int POOL_SIZE = 5;      // production default is 10
     private static final int SHOPPERS = 12;      // Friday traffic
@@ -30,7 +30,7 @@ public class Q09PoolExhausted {
     public static void main(String[] args) {
         Cats.cat("Friday 17:00, twelve cats at the checkout, five connections");
 
-        try (ConfigurableApplicationContext ctx = new SpringApplicationBuilder(Q09PoolExhausted.class)
+        try (ConfigurableApplicationContext ctx = new SpringApplicationBuilder(Q01PoolExhausted.class)
                 .web(WebApplicationType.NONE).bannerMode(Banner.Mode.OFF).logStartupInfo(false)
                 .properties("spring.datasource.hikari.maximum-pool-size=" + POOL_SIZE,
                             "spring.datasource.hikari.connection-timeout=2000")

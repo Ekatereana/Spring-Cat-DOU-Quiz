@@ -1,6 +1,6 @@
-// 2. @Transactional on a method called from inside the same bean
-// Run: ./gradlew q02
-package quiz.q02;
+// 3. @Transactional on a method called from inside the same bean
+// Run: ./gradlew q03
+package quiz.q03;
 
 import org.springframework.boot.Banner;
 import org.springframework.boot.WebApplicationType;
@@ -13,8 +13,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import quiz.common.Cats;
 
-@SpringBootApplication(scanBasePackages = "quiz.q02")
-public class Q02SelfInvocation {
+@SpringBootApplication(scanBasePackages = "quiz.q03")
+public class Q03SelfInvocation {
 
     @Service
     static class FeedingService {
@@ -37,7 +37,7 @@ public class Q02SelfInvocation {
 
     public static void main(String[] args) {
         Cats.cat("Dobby calls himself and loses the transaction");
-        try (ConfigurableApplicationContext ctx = new SpringApplicationBuilder(Q02SelfInvocation.class)
+        try (ConfigurableApplicationContext ctx = new SpringApplicationBuilder(Q03SelfInvocation.class)
                 .web(WebApplicationType.NONE).bannerMode(Banner.Mode.OFF).logStartupInfo(false).run(args)) {
 
             FeedingService service = ctx.getBean(FeedingService.class);
@@ -55,6 +55,7 @@ public class Q02SelfInvocation {
             System.out.println("   Fixes: move feedOnce() into another bean, inject self (@Lazy), "
                     + "AopContext.currentProxy() with @EnableAspectJAutoProxy(exposeProxy = true), "
                     + "or switch to AspectJ weaving.");
+            System.out.println("   (Dobby, meanwhile, remains unfed. Don't forget to feed him.)");
         }
     }
 }
