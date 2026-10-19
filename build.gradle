@@ -1,0 +1,49 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'quiz'
+version = '1.0'
+
+repositories { mavenCentral() }
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'com.h2database:h2'
+}
+
+java {
+    compileJava.options.release = 21
+}
+
+// One task per question:  ./gradlew q04
+def questions = [
+        q01: 'quiz.q01.Q01ReadinessEvent',
+        q02: 'quiz.q02.Q02SelfInvocation',
+        q03: 'quiz.q03.Q03CheckedException',
+        q04: 'quiz.q04.Q04DirtyChecking',
+        q05: 'quiz.q05.Q05LazyInit',
+        q06: 'quiz.q06.Q06NPlusOne',
+        q07: 'quiz.q07.Q07RollbackOnly',
+        q08: 'quiz.q08.Q08CircularDeps',
+        q09: 'quiz.q09.Q09Lifecycle',
+]
+
+questions.each { name, cls ->
+    tasks.register(name, JavaExec) {
+        group = 'quiz'
+        description = "Run question ${name - 'q'}"
+        classpath = sourceSets.main.runtimeClasspath
+        mainClass = cls
+        standardInput = System.in
+    }
+}
+
+tasks.register('quizAll') {
+    group = 'quiz'
+    description = 'Run every question in order'
+    dependsOn questions.keySet().toList()
+}
