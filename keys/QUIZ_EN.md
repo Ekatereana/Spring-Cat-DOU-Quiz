@@ -264,7 +264,134 @@ bowl filled -> Dobby eats
 
 ---
 
-## 9. Lifecycle order — bonus  (`./gradlew q09`)
+## 9. Friday, 17:00  (`./gradlew q09`)
+
+```java
+@Transactional
+public void checkout(String name) {
+    repo.save(new Cat(name));
+    paymentProvider.charge(name);   // external HTTP call, ~1.5 s
+}
+```
+```
+java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available,
+request timed out after 30000ms (total=10, active=10, idle=0, waiting=37)
+```
+
+- A) The database is down, or out of `max_connections`
+- B) Hikari leaks connections
+- C) Every checkout holds a connection for the whole payment call; the rest queue up and die
+- D) The pool is too small — `maximum-pool-size=200`
+
+**Answer: C.** A connection is borrowed when the transaction starts and returned when it
+commits. The payment call sits *inside* the transaction, so each request pins one connection
+for ~1.5 s even though the database does ~2 ms of work. With Boot's default
+`maximum-pool-size=10` the whole application can process about `10 / 1.5 s ≈ 6` checkouts per
+second. Everything above that waits in the pool queue and fails after
+`connection-timeout` (default **30 s**) with the message above — and 30 s of waiting means the
+Tomcat threads are gone too, so endpoints that never touch the database start failing as well.
+
+Nothing changed in the code on Friday. Only the arrival rate did: the pool settings encode an
+assumption about traffic, and the promo broke it.
+
+**Follow-up — what actually helps:**
+- ✅ move the payment call out of the transaction — the single biggest win: the transaction
+  shrinks from 1500 ms to ~2 ms and the same pool serves hundreds of checkouts per second
+- ✅ a read/connect timeout on the HTTP client — bounds the worst case instead of inheriting
+  "forever" from the partner
+- ✅ `spring.jpa.open-in-view=false` — otherwise the connection is held until the response is
+  rendered, not until the service method returns
+- ⚠️ `maximum-pool-size` — size it on purpose (`connections ≈ cores × 2` for the DB, and never
+  more than `max_connections / instances`), but a bigger pool only moves the queue from the
+  application to the database
+- ❌ a bigger Tomcat thread pool — more threads fighting over the same 10 connections
+
+**Output:**
+```
+pool size = 5, connection-timeout = 2000 ms, payment call = 1500 ms, shoppers = 12
+
+-- payment call INSIDE the transaction --
+pool during the spike: active=5, idle=0, threads waiting=7
+finished in 3036 ms: 10 ok, 2 failed
+SQLTransientConnectionException: HikariPool-1 - Connection is not available,
+request timed out after 2005ms (total=5, active=5, idle=0, waiting=0)
+orders written: 10 of 12
+
+-- payment call moved OUT of the transaction --
+pool during the spike: active=0, idle=5, threads waiting=0
+finished in 1506 ms: 12 ok, 0 failed
+orders written: 12 of 12
+```
+
+---
+
+## 10. The transaction that watched the sun rise  (`./gradlew q10`)
+
+```java
+@Transactional(timeout = 20)
+public void nightRun() {
+    for (Cat cat : repo.findAllDueForBilling()) {
+        partnerApi.send(cat);      // no socket timeout configured
+        cat.setBilled(true);
+    }
+}
+```
+At 09:00 the job is still running, a connection has been open since 01:00, and there is no
+`TransactionTimedOutException` in the log.
+
+- A) `timeout` only works with JTA
+- B) It is a deadline, not a watchdog — it is only checked when the next JDBC statement is issued
+- C) The timeout fired at 20 s; that connection belongs to another job
+- D) Hikari `maxLifetime` should have closed it
+
+**Answer: B.** Spring stores the deadline in the `ResourceHolder` for the transaction and
+checks it when the next statement goes out, passing the remaining seconds to
+`Statement.setQueryTimeout(...)`. There is no timer thread, and nothing interrupts the
+application thread. So:
+
+- a loop that **keeps querying** does die — on the first statement after the deadline
+  (`TransactionTimedOutException: Transaction timed out: deadline was ...`)
+- a loop parked in an **HTTP call** issues no statement, so nobody checks anything; the
+  connection stays checked out of the pool for as long as the socket read takes — all night,
+  if the client has no read timeout
+- `maxLifetime` does not help: Hikari only retires **idle** connections, never one that is in use
+- a `timeout` value is also a *maximum*, never a guarantee: the work is still rolled back at
+  the end, so the whole night of processing is lost anyway
+
+**Follow-up — what actually bounds the damage:**
+- ✅ connect/read timeouts on every HTTP and messaging client (this is the real fix)
+- ✅ one short transaction per chunk instead of one transaction around the loop — the
+  connection goes back to the pool between chunks and progress is kept
+- ✅ `idle_in_transaction_session_timeout` / `statement_timeout` on the database — the last
+  line of defence, enforced by someone other than your JVM
+- ✅ Hikari `leakDetectionThreshold` — turns "a connection is open since 01:00" into a log line
+  at 01:01
+- ❌ raising `timeout` to 600 — same bug, longer night
+
+**Output:**
+```
+-- version 1: the loop keeps querying the database --
+   t+1s  pool active=1, idle=2
+stopped after 2270 ms
+TransactionTimedOutException: Transaction timed out: deadline was ...
+
+-- version 2: the loop waits 5 s for a third-party API --
+   t+1s  pool active=1, idle=2
+   t+2s  pool active=1, idle=2
+   t+3s  pool active=1, idle=2
+   t+4s  pool active=1, idle=2      <- 2 s deadline, connection still held
+stopped after 5010 ms
+TransactionException: transaction timeout expired   <- only at commit, after the damage
+
+-- the fix: slow call outside, one short transaction per chunk --
+   t+1s  pool active=0, idle=3
+finished after 5038 ms, 5 iterations, no exception
+rows committed: 5
+```
+
+---
+
+## 11. Lifecycle order — bonus  (`./gradlew q11`)
 
 **Answer: A — the upside-down cat.** Initialisation order for a single bean:
 

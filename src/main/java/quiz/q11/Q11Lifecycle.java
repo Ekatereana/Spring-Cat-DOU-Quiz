@@ -1,6 +1,6 @@
-// 9. Bonus: bean lifecycle order - which cat gets drawn?
-// Run: ./gradlew q09
-package quiz.q09;
+// 11. Bonus: bean lifecycle order - which cat gets drawn?
+// Run: ./gradlew q11
+package quiz.q11;
 
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.InitializingBean;
@@ -16,8 +16,8 @@ import org.springframework.stereotype.Component;
 
 import quiz.common.Cats;
 
-@SpringBootApplication(scanBasePackages = "quiz.q09")
-public class Q09Lifecycle {
+@SpringBootApplication(scanBasePackages = "quiz.q11")
+public class Q11Lifecycle {
 
     @Component
     static class CatBean implements InitializingBean {
@@ -41,7 +41,7 @@ public class Q09Lifecycle {
 
     public static void main(String[] args) {
         System.out.println("Dobby is assembled part by part. Watch the order:\n");
-        new SpringApplicationBuilder(Q09Lifecycle.class)
+        new SpringApplicationBuilder(Q11Lifecycle.class)
                 .web(WebApplicationType.NONE).bannerMode(Banner.Mode.OFF).logStartupInfo(false)
                 .run(args).close();
         Cats.answer("constructor -> @PostConstruct -> afterPropertiesSet() -> ApplicationRunner -> ApplicationReadyEvent");

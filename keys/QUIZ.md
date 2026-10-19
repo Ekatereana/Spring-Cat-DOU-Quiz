@@ -342,7 +342,134 @@ bowl filled -> Dobby eats
 
 ---
 
-## 9. Порядок життєвого циклу — бонус  (`./gradlew q09`)
+## 9. П'ятниця, 17:00  (`./gradlew q09`)
+
+Промо запустили дві години тому. `/checkout` працював цілий тиждень, тепер падає.
+Сьогодні нічого не деплоїли.
+
+```java
+@Transactional
+public void checkout(String name) {
+    repo.save(new Cat(name));
+    paymentProvider.charge(name);   // зовнішній HTTP-виклик, ~1.5 с
+}
+```
+```
+java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available,
+request timed out after 30000ms (total=10, active=10, idle=0, waiting=37)
+```
+
+- A) База лежить або вичерпано `max_connections`
+- B) Hikari тече з'єднаннями — відомий баг, рестарт і далі
+- C) Кожен checkout тримає з'єднання весь час платіжного виклику; решта стає в чергу й помирає
+- D) Пул замалий — `maximum-pool-size=200` і по домівках
+
+**Відповідь: C.** З'єднання береться на старті транзакції й повертається на коміті. Платіжний
+виклик стоїть **усередині** транзакції, тож кожен запит пінить з'єднання на ~1.5 с, хоча база
+працює ~2 мс. З дефолтом Boot `maximum-pool-size=10` стеля — приблизно `10 / 1.5 с ≈ 6`
+checkout'ів за секунду. Усе зверху чекає в черзі пулу й падає через `connection-timeout`
+(дефолт **30 с**) із тим самим повідомленням. А 30 секунд чекання означає, що й потоки Tomcat
+закінчились — тому починають падати навіть ендпоінти, які в базу взагалі не ходять.
+
+У п'ятницю код не змінювався. Змінився лише потік запитів: налаштування пулу — це зафіксоване
+припущення про навантаження, і промо його зламало.
+
+**Додаткове — що реально допомагає:**
+- ✅ винести платіжний виклик за межі транзакції — найбільший виграш: транзакція з 1500 мс
+  стискається до ~2 мс, і той самий пул тягне сотні checkout'ів за секунду
+- ✅ read/connect timeout на HTTP-клієнті — обмежує найгірший випадок замість «як вийде в партнера»
+- ✅ `spring.jpa.open-in-view=false` — інакше з'єднання тримається до рендеру відповіді, а не
+  до виходу з сервісного методу
+- ⚠️ `maximum-pool-size` — підбирати свідомо (`з'єднань ≈ ядра × 2` для бази і ніколи більше
+  ніж `max_connections / кількість інстансів`); більший пул лише переносить чергу з застосунку в базу
+- ❌ більший пул потоків Tomcat — більше потоків б'ються за ті самі 10 з'єднань
+
+**Вивід:**
+```
+pool size = 5, connection-timeout = 2000 ms, payment call = 1500 ms, shoppers = 12
+
+-- payment call INSIDE the transaction --
+pool during the spike: active=5, idle=0, threads waiting=7
+finished in 3036 ms: 10 ok, 2 failed
+SQLTransientConnectionException: HikariPool-1 - Connection is not available,
+request timed out after 2005ms (total=5, active=5, idle=0, waiting=0)
+orders written: 10 of 12
+
+-- payment call moved OUT of the transaction --
+pool during the spike: active=0, idle=5, threads waiting=0
+finished in 1506 ms: 12 ok, 0 failed
+orders written: 12 of 12
+```
+
+---
+
+## 10. Транзакція, яка зустріла світанок  (`./gradlew q10`)
+
+Нічна джоба, 50 000 рядків, на кожен — виклик партнерського API. Хтось додав
+`@Transactional(timeout = 20)`, «щоб точно не зависла». О 09:00 джоба ще біжить, одне
+з'єднання відкрите з 01:00, і жодного `TransactionTimedOutException` у логах.
+
+```java
+@Transactional(timeout = 20)
+public void nightRun() {
+    for (Cat cat : repo.findAllDueForBilling()) {
+        partnerApi.send(cat);      // socket timeout не налаштований
+        cat.setBilled(true);
+    }
+}
+```
+
+- A) `timeout` працює тільки з JTA
+- B) Це дедлайн, а не вотчдог — він перевіряється, коли йде наступний JDBC-стейтмент
+- C) Таймаут спрацював на 20 с, а те з'єднання — від іншої джоби
+- D) Hikari `maxLifetime` мав його закрити, тобто це помилка конфігурації пулу
+
+**Відповідь: B.** Spring кладе дедлайн у `ResourceHolder` транзакції й перевіряє його, коли
+виконується наступний стейтмент, передаючи залишок секунд у `Statement.setQueryTimeout(...)`.
+Жодного таймер-треду немає, потік застосунку ніхто не перериває. Тому:
+
+- цикл, який **постійно ходить у базу**, таки впаде — на першому стейтменті після дедлайна
+  (`TransactionTimedOutException: Transaction timed out: deadline was ...`)
+- цикл, який стоїть в **HTTP-виклику**, не виконує жодного стейтмента, тож і перевіряти нема
+  кому; з'єднання лишається забраним із пулу рівно стільки, скільки триває read сокета — усю
+  ніч, якщо в клієнта немає read timeout
+- `maxLifetime` не рятує: Hikari прибирає тільки **простійні** з'єднання, а не те, що в роботі
+- `timeout` — це максимум, а не гарантія: робота однаково відкотиться в кінці, тож ціла ніч
+  обробки втрачена
+
+**Додаткове — що реально обмежує шкоду:**
+- ✅ connect/read timeout на кожному HTTP- і месенджер-клієнті (це і є справжній фікс)
+- ✅ коротка транзакція на кожен чанк замість однієї на весь цикл — з'єднання повертається в
+  пул між чанками, а зроблене лишається зробленим
+- ✅ `idle_in_transaction_session_timeout` / `statement_timeout` на боці бази — остання лінія
+  оборони, яку тримає не твоя JVM
+- ✅ Hikari `leakDetectionThreshold` — перетворює «з'єднання відкрите з 01:00» на рядок у лозі о 01:01
+- ❌ підняти `timeout` до 600 — той самий баг, тільки ніч довша
+
+**Вивід:**
+```
+-- version 1: the loop keeps querying the database --
+   t+1s  pool active=1, idle=2
+stopped after 2270 ms
+TransactionTimedOutException: Transaction timed out: deadline was ...
+
+-- version 2: the loop waits 5 s for a third-party API --
+   t+1s  pool active=1, idle=2
+   t+2s  pool active=1, idle=2
+   t+3s  pool active=1, idle=2
+   t+4s  pool active=1, idle=2      <- дедлайн 2 с, з'єднання все ще зайняте
+stopped after 5010 ms
+TransactionException: transaction timeout expired   <- аж на коміті, коли вже пізно
+
+-- the fix: slow call outside, one short transaction per chunk --
+   t+1s  pool active=0, idle=3
+finished after 5038 ms, 5 iterations, no exception
+rows committed: 5
+```
+
+---
+
+## 11. Порядок життєвого циклу — бонус  (`./gradlew q11`)
 
 **Відповідь: A — кіт догори дриґом.** Порядок ініціалізації одного біна:
 

@@ -26,7 +26,7 @@ call me a nasty liar. Don't trust the answer key? Run it and see for yourself.
 
 ```bash
 ./gradlew q04      # one question directly
-./gradlew quizAll  # all nine, in order
+./gradlew quizAll  # all eleven, in order
 ```
 
 ## Answer keys
@@ -39,7 +39,7 @@ Full versions with answers, explanations and expected output:
 
 # Quiz yourself
 
-Nine questions, no answers. Check yourself against the [answer keys](#answer-keys) above.
+Eleven questions, no answers. Check yourself against the [answer keys](#answer-keys) above.
 
 ## 1. When is the cat REALLY awake?
 
@@ -206,7 +206,64 @@ Spring Boot 3, default settings. What happens?
 `@Lazy` on one constructor parameter · field injection · setter injection ·
 `spring.main.allow-circular-references=true` · a third bean with the shared logic
 
-## 9. Lifecycle order — bonus
+## 9. Friday, 17:00
+
+The promo went live two hours ago. `/checkout` worked all week, now it throws. Nothing was deployed today.
+
+```java
+@Transactional
+public void checkout(String name) {
+    repo.save(new Cat(name));
+    paymentProvider.charge(name);   // external HTTP call, ~1.5 s
+}
+```
+```
+org.springframework.jdbc.CannotGetJdbcConnectionException ...
+caused by: java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not
+available, request timed out after 30000ms (total=10, active=10, idle=0, waiting=37)
+```
+What went wrong?
+
+- A) The database is down, or out of `max_connections`
+- B) Hikari leaks connections — a known bug, restart and move on
+- C) Every checkout holds a connection for the whole payment call, so ~10 connections / 1.5 s
+     is the ceiling; the rest queue up and die on `connection-timeout`
+- D) The pool is too small — set `maximum-pool-size=200` and go home
+
+**Follow-up:** which of these actually help?
+move the payment call out of the transaction · a read timeout on the HTTP client ·
+`maximum-pool-size=200` · `spring.jpa.open-in-view=false` · a bigger thread pool for Tomcat
+
+## 10. The transaction that watched the sun rise
+
+Nightly job, 50 000 rows, one partner API call per row. Someone added
+`@Transactional(timeout = 20)` "so it can never hang". At 09:00 the job is still running,
+one database connection has been open since 01:00, and there is no
+`TransactionTimedOutException` anywhere in the log.
+
+```java
+@Transactional(timeout = 20)
+public void nightRun() {
+    for (Cat cat : repo.findAllDueForBilling()) {
+        partnerApi.send(cat);      // no socket timeout configured
+        cat.setBilled(true);
+    }
+}
+```
+Why did the timeout not stop it?
+
+- A) `timeout` only works with JTA, not with a plain JDBC data source
+- B) It is a deadline, not a watchdog: it is checked when the next JDBC statement is issued.
+     A thread parked in an HTTP call issues none, and the connection stays borrowed
+- C) The timeout did fire at 20 s; the connection in the log belongs to another job
+- D) Hikari `maxLifetime` should have closed that connection, so it is a pool misconfiguration
+
+**Follow-up:** which of these actually bound the damage?
+a read/connect timeout on the HTTP client · one short transaction per chunk ·
+Postgres `idle_in_transaction_session_timeout` · raising `timeout` to 600 ·
+Hikari `leakDetectionThreshold`
+
+## 11. Lifecycle order — bonus
 
 Each lifecycle hook prints PART of a cat. The output itself **draws a cat**.
 Which cat comes out?
