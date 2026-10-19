@@ -97,18 +97,32 @@ feedOnce()   tx active = false
 ## 3. Кіт, який лишився в базі  (`./gradlew q03`)
 
 ```java
+class NoFoodException extends Exception { }      // дивимось на батьківський клас
+
 @Transactional
-public void feed() throws NoFoodException {   // NoFoodException extends Exception
+public void feedDobby() throws NoFoodException {
     repo.save(new Cat("Dobby"));
     throw new NoFoodException("bowl is empty");
 }
-```
-Метод кинув виняток. Що в таблиці?
 
-- A) Нічого — будь-який виняток відкочує транзакцію
-- B) `Dobby` на місці — на checked винятки Spring не робить rollback
-- C) Нічого, та ще й `UnexpectedRollbackException` зверху
-- D) Залежить від рівня ізоляції
+@Transactional
+public void feedShadow() {
+    repo.save(new Cat("Shadow"));
+    throw new IllegalStateException("bowl is empty");
+}
+```
+Викликали обидва методи, обидва кинули виняток, обидва винятки спіймані ззовні.
+Які коти лишились у таблиці?
+
+- A) Жодного — виняток завжди відкочує транзакцію
+- B) Тільки `Dobby`
+- C) Тільки `Shadow`
+- D) Обидва
+
+**Як відрізнити просто зі сніпета:** `NoFoodException extends Exception` напряму — отже
+**checked**, і саме тому в сигнатурі стоїть `throws NoFoodException`. `IllegalStateException`
+лежить під `RuntimeException` — **unchecked**, `throws` не потрібен. Ієрархія: усе під
+`Exception` — checked, **крім** гілки `RuntimeException`; `Error` теж unchecked.
 
 **Відповідь: B.** Дефолтне правило Spring: відкат на `RuntimeException` **або** `Error`.
 Checked виняток вважається бізнес-результатом, і транзакція **комітиться**. (У JTA/EJB

@@ -25,20 +25,20 @@ public class Q03CheckedException {
         FeedingService(CatRepo repo) { this.repo = repo; }
 
         @Transactional
-        public void feedChecked() throws NoFoodException {
+        public void feedDobby() throws NoFoodException {
             repo.save(new Cat("Dobby"));
             throw new NoFoodException("bowl is empty");       // checked
         }
 
         @Transactional
-        public void feedUnchecked() {
+        public void feedShadow() {
             repo.save(new Cat("Shadow"));
             throw new IllegalStateException("bowl is empty"); // unchecked
         }
 
         @Transactional(rollbackFor = Exception.class)
-        public void feedCheckedFixed() throws NoFoodException {
-            repo.save(new Cat("Mila"));
+        public void feedDobbyFixed() throws NoFoodException {
+            repo.save(new Cat("Dobby"));
             throw new NoFoodException("bowl is empty");
         }
     }
@@ -52,15 +52,15 @@ public class Q03CheckedException {
             CatRepo repo = ctx.getBean(CatRepo.class);
 
             repo.deleteAll();
-            try { service.feedChecked(); } catch (Exception e) { Cats.boom("checked:   " + e); }
+            try { service.feedDobby(); } catch (Exception e) { Cats.boom("checked:   " + e); }
             System.out.println("   rows after a CHECKED exception:   " + Cats.RED + repo.count() + Cats.R + "  <- committed!");
 
             repo.deleteAll();
-            try { service.feedUnchecked(); } catch (Exception e) { Cats.boom("unchecked: " + e); }
+            try { service.feedShadow(); } catch (Exception e) { Cats.boom("unchecked: " + e); }
             System.out.println("   rows after an UNCHECKED exception: " + Cats.G + repo.count() + Cats.R + "  <- rolled back");
 
             repo.deleteAll();
-            try { service.feedCheckedFixed(); } catch (Exception e) { Cats.boom("checked + rollbackFor: " + e); }
+            try { service.feedDobbyFixed(); } catch (Exception e) { Cats.boom("checked + rollbackFor: " + e); }
             System.out.println("   rows with rollbackFor = Exception.class: " + Cats.G + repo.count() + Cats.R + "  <- rolled back");
 
             Cats.answer("Spring rolls back on RuntimeException and Error only. A checked exception commits.");

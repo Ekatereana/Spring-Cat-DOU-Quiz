@@ -82,6 +82,34 @@ feedOnce()   tx active = false
 
 ## 3. The cat that stayed in the database  (`./gradlew q03`)
 
+```java
+class NoFoodException extends Exception { }      // note the parent class
+
+@Transactional
+public void feedDobby() throws NoFoodException {
+    repo.save(new Cat("Dobby"));
+    throw new NoFoodException("bowl is empty");
+}
+
+@Transactional
+public void feedShadow() {
+    repo.save(new Cat("Shadow"));
+    throw new IllegalStateException("bowl is empty");
+}
+```
+Both methods are called, both throw, both exceptions are caught outside. Which cats are in the table?
+
+- A) Neither — an exception always rolls the transaction back
+- B) Only `Dobby`
+- C) Only `Shadow`
+- D) Both of them
+
+**How to tell them apart in the snippet:** `NoFoodException extends Exception` directly, so it
+is **checked** — and that is exactly why the method needs `throws NoFoodException` in its
+signature. `IllegalStateException` sits under `RuntimeException`, so it is **unchecked** and
+needs no `throws`. The hierarchy: everything under `Exception` is checked **except** the
+`RuntimeException` subtree; `Error` is unchecked too.
+
 **Answer: B.** Spring's default rollback rule is `RuntimeException` **or** `Error`. A checked
 exception is treated as a business outcome and the transaction **commits**. (Plain JTA/EJB
 behaves the same way; it is a Spring default, not a JPA rule.)

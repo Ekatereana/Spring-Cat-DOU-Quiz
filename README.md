@@ -80,18 +80,26 @@ You call `service.feedTwice()` from outside. Is there a transaction inside `feed
 ## 3. The cat that stayed in the database
 
 ```java
+class NoFoodException extends Exception { }      // note the parent class
+
 @Transactional
-public void feed() throws NoFoodException {   // NoFoodException extends Exception
+public void feedDobby() throws NoFoodException {
     repo.save(new Cat("Dobby"));
     throw new NoFoodException("bowl is empty");
 }
-```
-`feed()` throws. What is in the table?
 
-- A) Nothing — any exception rolls the transaction back
-- B) `Dobby` is there — Spring does not roll back on checked exceptions
-- C) Nothing, and a second `UnexpectedRollbackException` on top
-- D) Depends on the isolation level
+@Transactional
+public void feedShadow() {
+    repo.save(new Cat("Shadow"));
+    throw new IllegalStateException("bowl is empty");
+}
+```
+Both methods are called, both throw, both exceptions are caught outside. Which cats are in the table?
+
+- A) Neither — an exception always rolls the transaction back
+- B) Only `Dobby`
+- C) Only `Shadow`
+- D) Both of them
 
 ## 4. Nobody called `save()`
 
