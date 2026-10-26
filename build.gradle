@@ -27,6 +27,8 @@ def questions = [
         q04: 'quiz.q04.Q04CircularDeps',
         q05: 'quiz.q05.Q05TxBoundaries',
         q06: 'quiz.q06.Q06Lifecycle',
+        q07: 'quiz.q07.Q07DirtyChecking',
+        q08: 'quiz.q08.Q08Profiles',
 ]
 
 questions.each { name, cls ->

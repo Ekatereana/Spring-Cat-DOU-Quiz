@@ -1,176 +1,216 @@
-# 🐱 Квіз «Кіт Доббі і Spring Essentials» — з відповідями
+# 🐱 Котячий квіз: що під капотом у Spring
 
 ```
-    _______________
-   |  SPRING  КВІЗ |
-   |_______________|
-       \o   o/
-       /\_/\
-      ( o.o )
-       > ^ <
+     ______________________
+    |  SPRING  DETECTIVE   |
+    |______________________|
+         \o   o/   ___
+         /\_/\    (___)
+        ( -.- )    | |
+         > ^ <
 ```
 
-> Щоб роздати студентам: прибрати блоки **Відповідь** і **Вивід**.
-> До кожного питання є робочий застосунок: `./gradlew qNN`.
+Знайомтесь: **Сеньорй-Помідор Доббі**, кіт-консультант. Приходить, коли вже все горить,
+нюхає логи, ставить кавусю і втішно каже: "Зара все пофіксимо"
+
+Готові зазирнути під капот Spring, у цю палаючу безодню? Візуалізуйте, пятниця 17:00, ніхто нічого не деплоїв
+(чесно-чесно), тільки включили checkout з-під feature flag (але воно ж протестоване).
+
+Few moments later:
+
+```
+java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available,
+request timed out after 30000ms (total=10, active=10, idle=0, waiting=37)
+```
+є гіпотези? Тоді го розбиратися -->
+
+П’ять мізансцен, код, лайв приклади, і лише одна правильна відповідь
+
+P.s пруфи можете глянути тут https://github.com/Ekatereana/Spring-Cat-DOU-Quiz, код там позапускати наприклад.
+І так, найцікавіше — в кінці, на солоденьке.
+
+> Для студентів: приберіть блоки з відповідями.
 
 ---
 
-## 1. П'ятниця, 17:00  (`./gradlew q01`)
+## Справа №1. П'ятниця, 17:00  (`./gradlew q01`)
 
-Промо запустили дві години тому. `/checkout` працював цілий тиждень. Сьогодні нічого не деплоїли.
+Тож візуалізуйте: пʼятниця, вечір, 17:00, ніхто нічого не деплоїть... запланований ролаут нової
+фічі вмикають feature flag-ом (згодна, ну хто це робить у пʼятницю). Промо живе дві години,
+`/checkout` працював цілий тиждень, сьогодні ніхто нічого не деплоїв.
 
 ```java
 @Transactional
 public void checkout(String name) {
     repo.save(new Cat(name));
-    paymentProvider.charge(name);   // зовнішній HTTP-виклик, ~1.5 с
+    paymentProvider.charge(name);   // зовнішній HTTP, ~1.5 с
 }
 ```
 ```
 java.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available,
 request timed out after 30000ms (total=10, active=10, idle=0, waiting=37)
 ```
+Що сталося?
 
 - A) База лежить або вичерпано `max_connections`
-- B) Hikari тече з'єднаннями
-- C) Кожен checkout тримає з'єднання весь платіжний виклик; решта стає в чергу й падає по таймауту
-- D) Пул замалий — `maximum-pool-size=200`
+- B) Hikari тече з'єднаннями — рестарт і поїхали
+- C) Кожен checkout тримає конекшн увесь платіжний виклик; решта стає в чергу й падає по таймауту
+- D) Пул замалий — `maximum-pool-size=200` і по домам
 
-**Відповідь: C.** З'єднання береться на старті транзакції й повертається на коміті. Платіжний
-виклик стоїть **усередині** транзакції, тож кожен запит пінить з'єднання на ~1.5 с, поки база
-працює ~2 мс. З дефолтом Boot `maximum-pool-size=10` стеля — близько 6 checkout'ів за секунду;
-усе зверху чекає в черзі пулу й падає після `connection-timeout` (дефолт 30 с). Код у п'ятницю
-не міняли — змінився потік запитів.
+**Правильно: C.** Конекшн беруть на старті транзакції й віддають на коміті. Платіж стоїть
+**усередині** — кожен запит пінить конекшн ~1.5 с, поки база працює ~2 мс. З дефолтом Boot
+`maximum-pool-size=10` стеля ~6 checkout/с, решта чекає в черзі пулу й падає через
+`connection-timeout` (30 с). Код у пʼятницю не міняли — змінився потік запитів.
 
-**Що допомагає:** винести платіжний виклик за межі транзакції (1500 мс → ~2 мс) ·
-read/connect timeout на HTTP-клієнті · `spring.jpa.open-in-view=false`.
-**Що ні:** `maximum-pool-size=200` чи більше потоків Tomcat — черга просто переїде в базу,
-а пул ніколи не має перевищувати `max_connections / кількість інстансів`.
-
-**Вивід** (пул 5, таймаут 2 с, 12 покупців):
-```
--- payment call INSIDE the transaction --
-pool during the spike: active=5, idle=0, threads waiting=7
-finished in 3036 ms: 10 ok, 2 failed
-orders written: 10 of 12
-
--- payment call moved OUT of the transaction --
-pool during the spike: active=0, idle=5, threads waiting=0
-finished in 1506 ms: 12 ok, 0 failed
-```
+**Що робить?:** платіж за межі транзакції (1500 мс → ~2 мс) · connect/read timeout на HTTP-клієнті ·
+`spring.jpa.open-in-view=false`.
+**Що не варто робить:** `maximum-pool-size=200` чи більше потоків Tomcat — черга просто переїде в базу.
+Пул ніколи не більший за `max_connections / кількість інстансів`.
 
 ---
 
-## 2. Коли кіт справді прокинувся?  (`./gradlew q02`)
+## Справа №2. Дорефакторилися до ручки  (`./gradlew q02`)
 
-Застосунок прогріває кеш в `ApplicationRunner`. Треба написати в discovery «сервіс піднявся» —
-але тільки коли кеш теплий і можна приймати трафік.
-
-```java
-@EventListener(???.class)
-void publishUp() { discovery.register(); }
-```
-
-- A) `ContextRefreshedEvent`
-- B) `ApplicationStartedEvent`
-- C) `ApplicationReadyEvent`
-- D) `ApplicationContextInitializedEvent`
-
-**Відповідь: C.** Порядок подій на старті:
+**Для розгону (а раптом ви забули)** — що там Spring на старті запускає
 `ApplicationStartingEvent` → `ApplicationEnvironmentPreparedEvent` →
 `ApplicationContextInitializedEvent` → `ApplicationPreparedEvent` →
 `ContextRefreshedEvent` → `ApplicationStartedEvent` → *runners* → `ApplicationReadyEvent`.
+Порт, до речі, сервер починає слухати ще до `ContextRefreshedEvent` — у `finishRefresh()`.
 
-- `ContextRefreshedEvent` — біни створені, більше нічого не гарантовано. Може стрельнути кілька
-  разів (дочірні контексти, actuator `/refresh`) — слухач виконається повторно.
-- `ApplicationStartedEvent` — контекст піднявся, але **runner'и ще не відпрацювали**: кеш холодний.
-- `ApplicationReadyEvent` — остання подія: runner'и завершились, сервер приймає трафік. Сюди
-  вішають прогрів, реєстрацію в discovery, старт консюмерів.
-- `AvailabilityChangeEvent` (`ReadinessState.ACCEPTING_TRAFFIC`) — те саме «по-кубернетівськи»,
-  і воно вміє перемикатись назад у `REFUSING_TRAFFIC`.
+**Кейс:** прогрів кешу жив в `ApplicationRunner`, реєстрація в discovery — на
+`ApplicationReadyEvent`. На ревʼю сказали «це ж обидва про старт, нащо два механізми».
 
-**Вивід:**
+**Було:**
+```java
+@Bean ApplicationRunner warmUp(Cache cache) {
+    return args -> cache.loadTopCats();          // ~20 с
+}
+
+@EventListener(ApplicationReadyEvent.class)
+void publishUp() { discovery.register(); }
 ```
-[event]   ContextRefreshedEvent   (beans created, context refreshed)
-[event]   ApplicationStartedEvent (context up, runners NOT run yet)
-[runner]  cache warmed up
-[event]   ApplicationReadyEvent   (runners finished, app can serve traffic)
+**Стало:**
+```java
+@EventListener(ApplicationReadyEvent.class)
+void warmUpCache() { cache.loadTopCats(); }      // ~20 с
+
+@EventListener(ApplicationReadyEvent.class)
+void publishUp()   { discovery.register(); }
 ```
+
+Красиво так? Прод не сильно згоден. Перші 20 секунд після кожного деплою — p95 у стелю й промахи кеша.
+
+Подію не міняли — вона й була правильна. То що зламалось?
+
+- A) `ApplicationReadyEvent` надто рано — треба `AvailabilityChangeEvent`
+- B) Між двома слухачами **однієї** події порядку не гарантовано: `publishUp()` законно
+  виконається першим, і discovery отримає «готовий» з холодним кешем
+- C) Прогрів блокує публікацію — вішаємо `@Async` і хай собі гріється
+- D) Spring бере лише перший `@EventListener` на подію в біні
+
+**Правильно: B.** Рефакторинг прибрав гарантію порядку й нічим її не замінив.
+
+- Слухачів однієї події збирає рефлексія; `AnnotationAwareOrderComparator` сортує тільки те,
+  що має `@Order`. Решта — як віддав JVM. Працювало випадково.
+- Runner'и ж упорядковані щодо події: `run()` кличе `callRunners()` і тільки потім публікує
+  `ApplicationReadyEvent`.
+- `@Async` (C) робить гірше: реєстрація обганяє прогрів **завжди**.
+- A — неправда: порт відкритий ще з `finishRefresh()`. D — неправда: кілька слухачів на подію
+  в одному класі норм.
+
+**А як красиво, якщо вже дуже хочеться на подіях?** Порядок треба попросити явно:
+
+```java
+@Order(1)
+@EventListener(ApplicationReadyEvent.class)
+void warmUpCache() { cache.loadTopCats(); }
+
+@Order(2)                                      // реєстрація — завжди останньою
+@EventListener(ApplicationReadyEvent.class)
+void publishUp()   { discovery.register(); }
+```
+
+Працює, але це домовленість, яку треба памʼятати на кожному новому слухачі: забув `@Order` —
+і новий слухач став у чергу випадково. Runner дає те саме безплатно й без домовленостей.
+
+**Що робить?:** прогрів назад в runner (найдешевше) · `@Order` на **всіх** слухачах цієї події,
+реєстрація останньою · `AvailabilityChangeEvent` + `ReadinessState` і readiness probe,
+якщо по-кубернетівськи.
 
 ---
 
-## 3. Доббі кличе сам себе  (`./gradlew q03`)
+## Справа №3. Прогрів, який не дожив до трафіку  (`./gradlew q02`)
+
+**Кейс:** прогрів кешу таки залишили в слухачі — «все про старт тримаємо в подіях».
+Сьогодні `cat-service` віддає 503, і `loadTopCats()` кидає `IllegalStateException`.
+
+```java
+@EventListener(ApplicationReadyEvent.class)
+void warmUpCache() { cache.loadTopCats(); }    // boom
+
+@EventListener(ApplicationReadyEvent.class)
+void publishUp()   { discovery.register(); }
+```
+
+Що станеться із застосунком?
+
+- A) Виняток залогується, `publishUp()` однаково виконається
+- B) Решта слухачів цієї події пропускається, `run()` кидає виняток далі, контекст
+  закривається, процес виходить з ненульовим кодом
+- C) Контекст уже піднятий — застосунок житиме, просто без кеша
+- D) Spring перепублікує подію
+
+**Правильно: B.** Слухач виконується синхронно, у потоці публікатора, тож виняток летить назад.
+`ApplicationReadyEvent` публікує сам `SpringApplication.run()`, а він не ловить мʼяко:
+`handleRunFailure()` закриває контекст і кидає далі. `publishUp()` не виконається взагалі.
+
+```
+ біни ──▶ порт слухає ──▶ ContextRefreshed ──▶ Started ──▶ runners ──▶ Ready ──▶ живемо
+   1            2               2                  3           4         5
+```
+
+| # | Виняток тут | Що буде |
+|---|---|---|
+| 1 | конструктор, `@PostConstruct`, `afterPropertiesSet()` | refresh падає, порт навіть не відкрився — найчесніше падіння |
+| 2 | слухач `ContextRefreshedEvent` | падає в `refresh()`, але порт уже слухає — вікно для трафіку |
+| 3 | слухач `ApplicationStartedEvent` | те саме, і кеш холодний: runner'и не починались |
+| 4 | runner | `callRunners()` падає, `ApplicationReadyEvent` не публікується зовсім |
+| 5 | слухач `ApplicationReadyEvent` | наш випадок: решту слухачів скіпнуто, контекст закрито, exit code ≠ 0 |
+| — | будь-який `@Async` слухач | виняток ковтає `AsyncUncaughtExceptionHandler`: под «готовий» і зламаний |
+
+---
+
+## Справа №4. Доббі кличе сам себе  (`./gradlew q03`)
 
 ```java
 public void feedTwice() { feedOnce(); }   // анотації немає, внутрішній виклик
 @Transactional public void feedOnce() { ... }
 ```
 
+Викликаємо `service.feedTwice()` зовні. Чи буде транзакція всередині `feedOnce()`?
+
 - A) Так, нова транзакція
 - B) Транзакції не буде взагалі
 - C) Так, але тільки якщо `feedTwice()` теж `@Transactional`
-- D) Помилка на старті
+- D) Помилка на старті: `@Transactional` на методі, який кличуть зсередини
 
-**Відповідь: B.** `@Transactional` працює через проксі (тут CGLIB — клас біна
-`FeedingService$$SpringCGLIB$$0`). Проксі перехоплює лише виклики, які йдуть **через нього**.
-`this.feedOnce()` не виходить за межі об'єкта, тож жоден інтерсептор не спрацьовує. Та сама
-пастка для `@Cacheable`, `@Async`, `@Retryable`, `@PreAuthorize`.
+**Правильно: B.** `@Transactional` працює через проксі (тут CGLIB, клас біна
+`FeedingService$$SpringCGLIB$$0`). `this.feedOnce()` не виходить за межі обʼєкта — жоден
+інтерсептор не спрацює. Та сама пастка для `@Cacheable`, `@Async`, `@Retryable`, `@PreAuthorize`.
 
-**Як лікувати:** винести `feedOnce()` в окремий бін (найчистіше) · заінжектити бін сам у себе
-(`@Lazy FeedingService self`) · `((FeedingService) AopContext.currentProxy()).feedOnce()` з
-`@EnableAspectJAutoProxy(exposeProxy = true)` · справжній AspectJ weaving.
+**Що робить?:** винести `feedOnce()` в окремий бін (найчистіше) · заінжектити бін сам у себе
+(`@Lazy FeedingService self`) · `((FeedingService) AopContext.currentProxy()).feedOnce()`
+з `@EnableAspectJAutoProxy(exposeProxy = true)` · справжній AspectJ weaving.
 
-> 🐱 *І головне — не забудь мене погодувати!*
-
-**Вивід:**
-```
-call through the proxy: service.feedOnce()
-feedOnce()   tx active = true
-call through the proxy, then internally: service.feedTwice()
-feedTwice()  tx active = false
-feedOnce()   tx active = false
-```
+> 🐱 *І головне — не забудь мене погодувати.*
 
 ---
 
-## 4. Коту потрібна миска, мисці потрібен кіт  (`./gradlew q04`)
+## Справа №5. Транзакція, яка зустріла світанок  (`./gradlew q05`)
 
-```java
-@Service class CatService  { CatService(BowlService bowl) { } }
-@Service class BowlService { BowlService(CatService cat)  { } }
-```
-
-- A) Стартує — Spring розрулює цикли триступеневим кешем
-- B) Падає на старті: `BeanCurrentlyInCreationException`
-- C) Стартує, падає на першому виклику
-- D) Стартує з ворнінгом
-
-**Відповідь: B.** Конструкторна ін'єкція вимагає готовий `BowlService`, щоб створити
-`CatService`, і навпаки — нерозв'язно. Починаючи з Boot 2.6 циклічні залежності ще й заборонені
-дефолтом (`spring.main.allow-circular-references=false`). Добра новина: падіння на старті, а не
-о третій ночі в проді.
-
-**Додаткове:** ✅ `@Lazy` на одному параметрі конструктора (інжектиться проксі, справжній бін
-будується на першому виклику) · ✅ третій бін зі спільною логікою — єдиний фікс, що прибирає
-проблему дизайну · ✅ `ApplicationEventPublisher` замість зворотного виклику ·
-⚠️ field/setter ін'єкція — «працює» лише з `allow-circular-references=true` і лишає цикл на
-місці разом із ризиком напівініціалізованого біна.
-
-**Вивід:**
-```
-BeanCurrentlyInCreationException: Error creating bean with name 'BowlService':
-Requested bean is currently in creation: Is there an unresolvable circular reference...
--- one side marked @Lazy --
-bowl filled -> Dobby eats
-```
-
----
-
-## 5. Транзакція, яка зустріла світанок  (`./gradlew q05`)
-
-Нічна джоба, 50 000 рядків, на кожен — виклик партнерського API. Хтось додав
-`@Transactional(timeout = 20)`, «щоб точно не зависла». О 09:00 джоба ще біжить, з'єднання
-відкрите з 01:00, і жодного `TransactionTimedOutException` у логах.
+**Тікет:** нічна джоба, 50 000 рядків, на кожен — виклик партнерського API. Хтось додав
+`@Transactional(timeout = 20)`, «щоб точно не зависла». О 09:00 джоба ще біжить, конекшн
+відкритий з 01:00, і жодного `TransactionTimedOutException` у логах.
 
 ```java
 @Transactional(timeout = 20)
@@ -182,45 +222,53 @@ public void nightRun() {
 }
 ```
 
-- A) `timeout` працює тільки з JTA
+- A) `timeout` працює тільки з JTA, а в нас же простий JDBC
 - B) Це дедлайн, а не вотчдог — перевіряється, коли йде наступний JDBC-стейтмент
-- C) Таймаут спрацював на 20 с, а те з'єднання — від іншої джоби
+- C) Таймаут спрацював на 20 с, а той конекшн — від іншої джоби
 - D) Hikari `maxLifetime` мав його закрити
 
-**Відповідь: B.** Spring кладе дедлайн у `ResourceHolder` транзакції й перевіряє його, коли
-виконується наступний стейтмент, передаючи залишок секунд у `Statement.setQueryTimeout`.
-Таймер-треду немає, потік застосунку ніхто не перериває. Тому цикл, який постійно ходить у базу,
-падає на першому стейтменті після дедлайна, а цикл, що стоїть в HTTP-виклику, не виконує жодного
-стейтмента — перевіряти нема кому, і з'єднання лишається забраним із пулу стільки, скільки триває
-read сокета. `maxLifetime` теж не рятує: Hikari прибирає лише **простійні** з'єднання, не ті, що в роботі.
+**Правильно: B.** Spring кладе дедлайн у `ResourceHolder` і перевіряє його на наступному
+стейтменті, передаючи залишок у `Statement.setQueryTimeout`. Таймер-треду немає, потік ніхто
+не перериває. Цикл, що ходить у базу, падає на першому стейтменті після дедлайна; цикл, що стоїть
+в HTTP-виклику, не виконує стейтментів — перевіряти нема кому. `maxLifetime` теж не рятує:
+Hikari прибирає тільки **простійні** конекшни.
 
-**Що обмежує шкоду:** connect/read timeout на кожному HTTP- і месенджер-клієнті (справжній фікс) ·
-коротка транзакція на кожен чанк — з'єднання повертається в пул, а зроблене лишається зробленим ·
-`idle_in_transaction_session_timeout` / `statement_timeout` на боці бази ·
-Hikari `leakDetectionThreshold` заради рядка в лозі о 01:01.
-**Що ні:** підняти `timeout` до 600 — той самий баг, тільки ніч довша.
-
-**Вивід:**
-```
--- loop keeps querying the database --
-stopped after 2270 ms
-TransactionTimedOutException: Transaction timed out: deadline was ...
-
--- loop waits 5 s for a third-party API --
-   t+4s  pool active=1, idle=2        <- дедлайн 2 с, з'єднання все ще зайняте
-stopped after 5010 ms
-TransactionException: transaction timeout expired   <- аж на коміті, коли вже пізно
-
--- fix: slow call outside, one short transaction per chunk --
-   t+1s  pool active=0, idle=3
-rows committed: 5
-```
+**Що робить?:** connect/read timeout на кожному HTTP- і месенджер-клієнті (справжній фікс) ·
+коротка транзакція на чанк · `idle_in_transaction_session_timeout` / `statement_timeout`
+на боці бази · `leakDetectionThreshold` заради рядка в лозі о 01:01.
+**Що не варто робить:** підняти `timeout` до 600 — той самий баг, тільки ніч довша.
 
 ---
 
-## 6. Порядок життєвого циклу — бонус  (`./gradlew q06`)
+## Бонус. Із чого складається кіт  (`./gradlew q06`)
 
-**Відповідь: A — кіт догори дриґом.** Порядок ініціалізації одного біна:
+Кожен колбек життєвого циклу друкує частину кота. Який кіт вийде?
+
+```java
+@Component
+class CatBean implements InitializingBean {
+
+    CatBean()                        { System.out.println(" > ^ < "); }  // вуса
+    @PostConstruct void post()       { System.out.println("( o.o )"); }  // морда
+    public void afterPropertiesSet() { System.out.println(" /\_/\ "); }  // вуха
+    @EventListener(ApplicationReadyEvent.class)
+    void ready()                     { System.out.println("  purr  "); } // мурчання
+}
+
+@Bean ApplicationRunner runner() {
+    return args -> System.out.println(" ~~~~~ ");                        // хвіст
+}
+```
+```
+A) догори дриґом    B) нормальний кіт   C) мурчить першим   D) хвіст останній
+ > ^ <               /\_/\                purr               /\_/\
+( o.o )             ( o.o )              /\_/\              ( o.o )
+ /\_/\               > ^ <              ( o.o )              > ^ <
+ ~~~~~               ~~~~~               > ^ <                purr
+  purr                purr               ~~~~~               ~~~~~
+```
+
+**Правильно: A — кіт догори дриґом.** Порядок для одного біна:
 
 1. конструктор (залежності вже заінжектені) — вуса
 2. `@PostConstruct` — морда
@@ -229,16 +277,11 @@ rows committed: 5
 5. `ApplicationRunner` / `CommandLineRunner` — хвіст
 6. `ApplicationReadyEvent` — мурчання
 
-`@PostConstruct` іде **раніше** за `afterPropertiesSet()`, бо анотаційні колбеки виконує
+`@PostConstruct` іде раніше за `afterPropertiesSet()`, бо анотаційні колбеки виконує
 `CommonAnnotationBeanPostProcessor` у `postProcessBeforeInitialization`, а `afterPropertiesSet()`
 — це вже сам крок ініціалізації. На зупинці все дзеркально:
 `ContextClosedEvent` → `@PreDestroy` → `DisposableBean.destroy()`.
 
-**Вивід:**
-```
- > ^ <
-( o.o )
- /\_/\
- ~~~~~
-  purr
-```
+---
+
+Справи закриті, кавуся допита. Доббі пішов їсти — він своє зробив.
